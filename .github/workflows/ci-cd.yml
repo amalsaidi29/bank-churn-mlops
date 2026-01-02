@@ -1,0 +1,64 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  AZURE_RESOURCE_GROUP: rg-mlops
+  ACR_NAME: acrmlopsamal1765551440
+  CONTAINER_APP_NAME: app-churn-api
+  IMAGE_NAME: bank-churn-api
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run tests
+        run: pytest tests/ -v
+
+  build-and-deploy:
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Login to ACR
+        uses: azure/docker-login@v1
+        with:
+          login-server: ${{ env.ACR_NAME }}.azurecr.io
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Build & Push Image
+        run: |
+          docker build -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} .
+          docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+      - name: Deploy to Azure Container App
+        run: |
+          az containerapp update \
+            --name ${{ env.CONTAINER_APP_NAME }} \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
